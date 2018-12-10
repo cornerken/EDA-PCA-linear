@@ -1,0 +1,162 @@
+#=============================================
+# task：Exploratory Data Analysis
+# date：2018/12/8
+# version：1.0
+#---------------------------------------------
+# 1 导入数据
+#      读取数据
+#      查看统计数据
+#      查看缺失值
+# 2 特征变量筛选
+#      不明显特征剔除
+#      特征构造
+# 3 单变量分析
+#      箱线图
+#      缺失值插补
+# 4 多变量分析
+#      相关性分析
+#      主成分分析
+# 5 linear性模型构造及结果解读
+#=============================================
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+library(readxl)
+library(dplyr)
+library("randomForest")
+library('mice')
+
+##################1 导入数据（引用路径）#################
+setwd("D://网络接单//数据分析//20181208-R-EDA探索性分析")
+##读取数据
+rm(list=ls())
+a<-read_excel('icadata.xlsx')
+head(a, n=10)
+```
+
+```{r}
+##View statistics and missing values
+#查看统计数据和缺失值
+str(a)
+summary(a)
+```
+
+
+```{r}
+##不明显特征剔除 Not obvious Feature culling
+##oil_per_capita_2016,working_hours_2017,primary_completion_2016缺失值较多做初步剔除，对缺失值较少，极值较大的pop_dens_2018做处理，其他变量与lifeexp作散点图
+a1<-a[,-c(1,12,18,19)]
+head(a1)
+sub1 <- which(is.na(a1$pop_dens_2018))
+sub2 <- which(is.na(a1$lifeexp))
+a2 <- a1[-c(sub1,sub2),] #缺失行剔除
+q1 <- quantile(a2$pop_dens_2018, 0.01)        #取得时1%时的变量值  
+q99 <- quantile(a2$pop_dens_2018, 0.99)       #取得时99%时的变量值
+a2[a2$pop_dens_2018 < q1,]$pop_dens_2018 <- q1  
+a2[a2$pop_dens_2018 > q99,]$pop_dens_2018 <- q99  ##异常值盖帽处理
+plot(a2$pop_dens_2018,a2$lifeexp2018,xlim = c(0,1000),ylim = c(0,85))
+pairs(a2[1:4], main="lif Data", font.main=4, pch=19,bg=c('red','green3','blue'))
+pairs(~lifeexp2018+mobile_2016+child_mort_2018+child_per_woman_2018,data=a2,main="lif Data", font.main=4, pch=19,bg=c('red','green3','blue'))
+pairs(~lifeexp2018+income_pp_2018+inflation_2017+internet_2016,data=a1,main="lif Data", font.main=4, pch=19,bg=c('red','green3','blue'))
+pairs(~lifeexp2018+sl_emp_2017+urban_pop_2017,data=a2,main="lif Data", font.main=4, pch=19,bg=c('red','green3','blue'))
+pairs(~lifeexp2018+urban_pop_2017+pop_dens_2018,data=a2,main="lif Data", font.main=4, pch=19,bg=c('red','green3','blue'))
+```
+
+```{r}
+#From the scatter matrix, the single variables that are more linear with lifeexp2018 are agri_2017, child_mort_2018, child_per_woman_2018, internet_2016, sl_emp_2017, urban_pop_2017, urban_pop_2017.
+#由散点矩阵看，与lifeexp2018呈较为明显线性趋势的单变量有agri_2017,child_mort_2018,child_per_woman_2018,internet_2016,sl_emp_2017,urban_pop_2017,urban_pop_2017。
+#four_regions  与 worldbankregion 对 lifeexp2018做分组统计  , make boxplot
+boxplot(lifeexp2018~four_regions , data=a2,col="lavender")
+boxplot(lifeexp2018~worldbankregion , data=a2,col="lavender")
+```
+
+```{r}
+##From the box-line diagram, the difference in life expectancy between the people of different continents is more obvious. From bottom to top, Africa, Asia, America, and Europe, respectively, should construct structural variables, while the difference in worldbankregion is not obvious, and can be eliminated.
+##由箱线图观察，不同大洲的国家人民预期寿命差异较为明显，自下而上分别为非洲，亚洲，美洲，欧洲，应构造特征变量，而worldbankregion地区差异不明显，可做剔除
+#特征构造 create Feature
+a3<-within(a2,
+           {
+             four_asia<-0
+             four_asia[four_regions=='asia']<-1
+             four_asia[four_regions!='asia']<-0
+             four_europe<-0
+             four_europe[four_regions=='europe']<-1
+             four_europe[four_regions!='europe']<-0
+             four_americas<-0
+             four_americas[four_regions=='americas']<-1
+             four_americas[four_regions!='americas']<-0
+             four_africa<-0
+             four_africa[four_regions=='africa']<-1
+             four_africa[four_regions!='africa']<-0
+           })
+a4 <-a3[,c(1,3,6,7,10,12,13,17,18,19,20)]
+head(a4)
+```
+```{r}
+##Observe the distribution of characteristic variables after screening
+#观察筛选后特征变量分布情况
+boxplot(a4)
+```
+
+```{r}
+##Imputation of Missing Values Using randomForest
+##缺失值观察，用随机森林算法对缺失值进行插补
+
+md.pattern(a4)
+miceMod <- mice(a4[, !names(a4) %in% "medv"], method="rf")
+```
+
+```{r}
+#Correlation analysis
+#相关性分析
+a5 <- complete(miceMod)
+head(a5)
+plot(a5)
+round(cor(a5),3)
+```
+
+```{r}
+##The correlation coefficient matrix shows that child_mort_2018 has a higher correlation with child_per_woman_2018, and the absolute value of the correlation coefficient between the first five variables is greater than 0.6, which should be principal component analysis.
+#相关系数矩阵显示child_mort_2018与child_per_woman_2018 相关性较高，前五变量间相关系数绝对值均大于0.6，应做主成分分析
+pca <- a5[2:7]
+pca.pr <-princomp(pca,cor=TRUE)
+summary(pca.pr,loadings=TRUE)
+screeplot(pca.pr,type="lines")
+```
+
+```{r}
+#The first two of the four principal components add up to more than 85%, and the first two principal components are selected.
+#4个主成分中前两个加起来已超过85%，选择前两个主成分
+temp<-predict(pca.pr) 
+plot(temp[,1:2],a5[])
+```
+
+```{r}
+#主成分融合，准备建模 Principal component fusion, ready to model
+trainx <- cbind.data.frame(a5[1],temp[,1:2],a5[,8:11])
+head(trainx)
+```
+
+```{r}
+#构建线性回归模型  Building a linear regression model
+lm1 = lm(lifeexp2018~Comp.1+Comp.2+four_africa+four_americas+four_europe+four_asia,data = trainx)
+summary(lm1)
+par(mfrow=c(2,2))
+plot(lm1,which=c(1,4))
+##final equation R square 0.76, F test p value less than 0.05, the model is feasible, the most important factors are comp1 and africa, comp one is mainly the population fertility rate and agricultural factors, that is, the higher the population fertility rate, the higher the agriculture, the economy The lower the life expectancy of the less developed regions, the more common sense
+#最终方程R方0.76，F检验p值小于0.05，模型可行，其中最重要因素为comp1与africa，comp一中主要为人口生育率与农业因素，即人口生育率越高，农业越高，经济越不发达的地区人口预期寿命越低，符合常理
+```
+
+
